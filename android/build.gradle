@@ -34,7 +34,7 @@ apply plugin: 'maven-publish'
 
 android {
     namespace 'com.jhomlala.better_player'
-    compileSdkVersion 31
+    compileSdk 34
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -50,7 +50,8 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 16
+        applicationId "com.jhomlala.better_player"
+        minSdkVersion 24
     }
 
     dependencies {
