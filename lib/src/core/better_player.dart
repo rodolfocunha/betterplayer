@@ -6,7 +6,7 @@ import 'package:better_player/src/core/better_player_with_controls.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:visibility_detector/visibility_detector.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:wakelock/wakelock.dart';
 
 ///Widget which uses provided controller to render video player.
 class BetterPlayer extends StatefulWidget {
@@ -102,7 +102,7 @@ class _BetterPlayerState extends State<BetterPlayer>
     ///full screen is on, then full screen route must be pop and return to normal
     ///state.
     if (_isFullScreen) {
-      WakelockPlus.disable();
+      Wakelock.disable();
       _navigatorState.maybePop();
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
           overlays: _betterPlayerConfiguration.systemOverlaysAfterFullScreen);
@@ -128,13 +128,21 @@ class _BetterPlayerState extends State<BetterPlayer>
     super.didUpdateWidget(oldWidget);
   }
 
-  void onControllerEvent(BetterPlayerControllerEvent event) {
+  void onControllerEvent(BetterPlayerControllerEvent event) async {
     switch (event) {
       case BetterPlayerControllerEvent.openFullscreen:
         onFullScreenChanged();
         break;
       case BetterPlayerControllerEvent.hideFullscreen:
         onFullScreenChanged();
+        break;
+      case BetterPlayerControllerEvent.setupDataSource:
+        if (widget.controller.isPipActive == true) {
+          await onFullScreenChanged();
+          await onFullScreenChanged();
+        } else {
+          setState(() {});
+        }
         break;
       default:
         setState(() {});
@@ -244,7 +252,7 @@ class _BetterPlayerState extends State<BetterPlayer>
     }
 
     if (!_betterPlayerConfiguration.allowedScreenSleep) {
-      WakelockPlus.enable();
+      Wakelock.enable();
     }
 
     await Navigator.of(context, rootNavigator: true).push(route);
@@ -253,7 +261,7 @@ class _BetterPlayerState extends State<BetterPlayer>
 
     // The wakelock plugins checks whether it needs to perform an action internally,
     // so we do not need to check Wakelock.isEnabled.
-    WakelockPlus.disable();
+    Wakelock.disable();
 
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: _betterPlayerConfiguration.systemOverlaysAfterFullScreen);

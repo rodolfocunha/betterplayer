@@ -137,6 +137,12 @@ abstract class VideoPlayerPlatform {
     throw UnimplementedError('getAbsolutePosition() has not been implemented.');
   }
 
+  ///Set PiP actions.
+  Future<void> setPictureInPictureActions(List<String> actions) {
+    throw UnimplementedError(
+        'setPictureInPictureActions() has not been implemented.');
+  }
+
   ///Enables PiP mode.
   Future<void> enablePictureInPicture(int? textureId, double? top, double? left,
       double? width, double? height) {
@@ -227,6 +233,7 @@ class DataSource {
     this.activityName,
     this.clearKey,
     this.videoExtension,
+    this.allowChunklessPreparation,
   }) : assert(uri == null || asset == null);
 
   /// Describes the type of data source this [VideoPlayerController]
@@ -304,6 +311,8 @@ class DataSource {
   final String? clearKey;
 
   final String? videoExtension;
+
+  final bool? allowChunklessPreparation;
 
   /// Key to compare DataSource
   String get key {

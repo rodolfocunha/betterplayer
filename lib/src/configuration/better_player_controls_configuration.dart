@@ -161,6 +161,21 @@ class BetterPlayerControlsConfiguration {
   ///Color of text in bottom modal sheet used for overflow menu items.
   final Color overflowModalTextColor;
 
+  ///Custom widget instead of default subtitlesIcon
+  final Widget? customSubtitlesIcon;
+
+  ///Custom widget instead of default playbackSpeedIcon
+  final Widget? customPlaybackSpeedIcon;
+
+  ///Custom widget instead of default qualitiesIcon
+  final Widget? customQualitiesIcon;
+
+  ///Style of selected text in settings modal bottom sheet
+  final TextStyle? modalSelectedTextStyle;
+
+  ///Style of unselected text in settings modal bottom sheet
+  final TextStyle? modalUnselectedTextStyle;
+
   const BetterPlayerControlsConfiguration({
     this.controlBarColor = Colors.black87,
     this.textColor = Colors.white,
@@ -213,6 +228,11 @@ class BetterPlayerControlsConfiguration {
     this.backgroundColor = Colors.black,
     this.overflowModalColor = Colors.white,
     this.overflowModalTextColor = Colors.black,
+    this.customSubtitlesIcon,
+    this.customPlaybackSpeedIcon,
+    this.customQualitiesIcon,
+    this.modalSelectedTextStyle,
+    this.modalUnselectedTextStyle,
   });
 
   factory BetterPlayerControlsConfiguration.white() {
@@ -240,8 +260,8 @@ class BetterPlayerControlsConfiguration {
   ///Setup BetterPlayerControlsConfiguration based on Theme options.
   factory BetterPlayerControlsConfiguration.theme(ThemeData theme) {
     return BetterPlayerControlsConfiguration(
-      textColor: theme.textTheme.bodySmall?.color ?? Colors.white,
-      iconsColor: theme.buttonTheme.colorScheme?.primary ?? Colors.white,
+      textColor: theme.textTheme.bodyLarge?.color ?? Colors.white,
+      iconsColor: theme.textTheme.displayLarge?.color ?? Colors.white,
     );
   }
 }

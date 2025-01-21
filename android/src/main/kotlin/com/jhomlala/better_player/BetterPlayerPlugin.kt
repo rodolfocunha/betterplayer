@@ -4,14 +4,26 @@
 package com.jhomlala.better_player
 
 import android.app.Activity
+import android.app.AppOpsManager;
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.app.UiModeManager;
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.util.LongSparseArray
+import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+import com.jhomlala.better_player.Constants.EXTRA_ACTION_TYPE
+import com.jhomlala.better_player.Constants.SIMPLE_PIP_ACTION
+import com.jhomlala.better_player.PipAction
 import com.jhomlala.better_player.BetterPlayerCache.releaseCache
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -39,6 +51,13 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
     private var activity: Activity? = null
     private var pipHandler: Handler? = null
     private var pipRunnable: Runnable? = null
+
+    private lateinit var channel: MethodChannel
+    private var callbackHelper = PipCallbackHelper()
+    private lateinit var broadcastReceiver: BroadcastReceiver
+    private var actions: MutableList<PipAction> = mutableListOf()
+    private var params: PictureInPictureParams.Builder? = null
+
     override fun onAttachedToEngine(binding: FlutterPluginBinding) {
         val loader = FlutterLoader()
         flutterState = FlutterState(
@@ -60,6 +79,40 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             binding.textureRegistry
         )
         flutterState?.startListening(this)
+
+        channel = MethodChannel(binding.binaryMessenger, PIP_CHANNEL)
+        callbackHelper.setChannel(channel)
+        channel.setMethodCallHandler(this)
+        broadcastReceiver = object : BroadcastReceiver() {
+            @RequiresApi(Build.VERSION_CODES.O)
+            override fun onReceive(context: Context, intent: Intent) {
+                if (SIMPLE_PIP_ACTION !== intent.action) {
+                    return
+                }
+                intent.getStringExtra(EXTRA_ACTION_TYPE)?.let {
+                    val action = PipAction.valueOf(it)
+                    callbackHelper.onPipAction(action)
+                    action.afterAction()?.let { afterAction ->
+                        val a = actions.firstOrNull { it == action }
+                        a?.let {
+                            val i = actions.indexOf(a)
+                            actions[i] = afterAction
+                        }
+                        params?.let {
+                            it.setActions(getRemoteActions(null))
+                        }
+                        activity?.setPictureInPictureParams(params!!.build())
+                    }
+                }
+            }
+        }.also { broadcastReceiver = it }
+
+        ContextCompat.registerReceiver(
+            binding.applicationContext,
+            broadcastReceiver,
+            IntentFilter(SIMPLE_PIP_ACTION),
+            RECEIVER_EXPORTED
+        )
     }
 
 
@@ -106,13 +159,15 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 var customDefaultLoadControl: CustomDefaultLoadControl? = null
                 if (call.hasArgument(MIN_BUFFER_MS) && call.hasArgument(MAX_BUFFER_MS) &&
                     call.hasArgument(BUFFER_FOR_PLAYBACK_MS) &&
-                    call.hasArgument(BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                    call.hasArgument(BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS) &&
+                    call.hasArgument(BACK_BUFFER_DURATION_MS)
                 ) {
                     customDefaultLoadControl = CustomDefaultLoadControl(
                         call.argument(MIN_BUFFER_MS),
                         call.argument(MAX_BUFFER_MS),
                         call.argument(BUFFER_FOR_PLAYBACK_MS),
-                        call.argument(BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                        call.argument(BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS),
+                        call.argument(BACK_BUFFER_DURATION_MS)
                     )
                 }
                 val player = BetterPlayer(
@@ -124,6 +179,10 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             PRE_CACHE_METHOD -> preCache(call, result)
             STOP_PRE_CACHE_METHOD -> stopPreCache(call, result)
             CLEAR_CACHE_METHOD -> clearCache(result)
+            SET_PICTURE_IN_PICTURE_ACTIONS_METHOD -> {
+                setPuctureInPictireActions(call.argument<List<String>>(ACTIONS_PARAMETER)!!)
+                result.success(null)
+            }
             else -> {
                 val textureId = (call.argument<Any>(TEXTURE_ID_PARAMETER) as Number?)!!.toLong()
                 val player = videoPlayers[textureId]
@@ -258,7 +317,8 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 0L,
                 overriddenDuration.toLong(),
                 null,
-                null, null, null
+                null, null, null,
+                null
             )
         } else {
             val useCache = getParameter(dataSource, USE_CACHE_PARAMETER, false)
@@ -274,6 +334,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
             val clearKey = getParameter<String?>(dataSource, DRM_CLEARKEY_PARAMETER, null)
             val drmHeaders: Map<String, String> =
                 getParameter(dataSource, DRM_HEADERS_PARAMETER, HashMap())
+            val allowChunklessPreparation = getParameter<Boolean?>(dataSource, ALLOW_CHUNKLESS_PREPARATION, null)
             player.setDataSource(
                 flutterState!!.applicationContext,
                 key,
@@ -288,7 +349,8 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
                 licenseUrl,
                 drmHeaders,
                 cacheKey,
-                clearKey
+                clearKey,
+                allowChunklessPreparation
             )
         }
     }
@@ -402,14 +464,60 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
 
 
     private fun isPictureInPictureSupported(): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity != null && activity!!.packageManager
-            .hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+        val appOps = flutterState?.applicationContext!!.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+        return appOps?.checkOpNoThrow(
+                AppOpsManager.OPSTR_PICTURE_IN_PICTURE,
+                android.os.Process.myUid(),
+                flutterState?.applicationContext!!.packageName
+            ) == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun getRemoteActions(isPlaying: Boolean?): List<RemoteAction> {
+        if (isPlaying != null) {
+            val current = if (isPlaying!!) PipAction.PLAY else PipAction.PAUSE
+
+            val a = actions.firstOrNull { it == current }
+            a?.let {
+                val i = actions.indexOf(a)
+                actions[i] = a!!.afterAction()!!
+            }
+        }
+        
+        val maxCount = activity!!.getMaxNumPictureInPictureActions()
+        if (maxCount < actions.size) {
+            actions.remove(PipAction.NEXT)
+            actions.remove(PipAction.PREVIOUS)
+            return actions.map { action -> action.toRemoteAction(flutterState?.applicationContext!!) }
+        }
+        return actions.map { action -> action.toRemoteAction(flutterState?.applicationContext!!) }
+    }
+
+    private fun setPuctureInPictireActions(actionNames: List<String>) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O){
+            actions = actionNames.map { name ->
+                PipAction.valueOf(name.uppercase())
+            }.toMutableList()
+
+        
+            params?.let {
+                it.setActions(getRemoteActions(null))
+            }
+            activity?.setPictureInPictureParams(params!!.build())
+        }
     }
 
     private fun enablePictureInPicture(player: BetterPlayer) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             player.setupMediaSession(flutterState!!.applicationContext)
-            activity!!.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+            params = PictureInPictureParams.Builder().setAutoEnterEnabled(true)
+
+            if (actions.isNotEmpty()) {
+                params?.setActions(getRemoteActions(player.isPlaying()))
+            }
+
+            activity!!.enterPictureInPictureMode(
+                params!!.build()
+            )
             startPictureInPictureListenerTimer(player)
             player.onPictureInPictureStatusChanged(true)
         }
@@ -483,6 +591,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
     companion object {
         private const val TAG = "BetterPlayerPlugin"
         private const val CHANNEL = "better_player_channel"
+        private const val PIP_CHANNEL = "better_player.pip_mode"
         private const val EVENTS_CHANNEL = "better_player_channel/videoEvents"
         private const val DATA_SOURCE_PARAMETER = "dataSource"
         private const val KEY_PARAMETER = "key"
@@ -511,7 +620,9 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val LICENSE_URL_PARAMETER = "licenseUrl"
         private const val DRM_HEADERS_PARAMETER = "drmHeaders"
         private const val DRM_CLEARKEY_PARAMETER = "clearKey"
+        private const val ALLOW_CHUNKLESS_PREPARATION = "allowChunklessPreparation"
         private const val MIX_WITH_OTHERS_PARAMETER = "mixWithOthers"
+        private const val ACTIONS_PARAMETER = "actions"
         const val URL_PARAMETER = "url"
         const val PRE_CACHE_SIZE_PARAMETER = "preCacheSize"
         const val MAX_CACHE_SIZE_PARAMETER = "maxCacheSize"
@@ -523,6 +634,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         const val MAX_BUFFER_MS = "maxBufferMs"
         const val BUFFER_FOR_PLAYBACK_MS = "bufferForPlaybackMs"
         const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = "bufferForPlaybackAfterRebufferMs"
+        const val BACK_BUFFER_DURATION_MS = "backBufferDurationMs"
         const val CACHE_KEY_PARAMETER = "cacheKey"
         private const val INIT_METHOD = "init"
         private const val CREATE_METHOD = "create"
@@ -537,6 +649,7 @@ class BetterPlayerPlugin : FlutterPlugin, ActivityAware, MethodCallHandler {
         private const val SET_SPEED_METHOD = "setSpeed"
         private const val SET_TRACK_PARAMETERS_METHOD = "setTrackParameters"
         private const val SET_AUDIO_TRACK_METHOD = "setAudioTrack"
+        private const val SET_PICTURE_IN_PICTURE_ACTIONS_METHOD = "setPictureInPictureActions"
         private const val ENABLE_PICTURE_IN_PICTURE_METHOD = "enablePictureInPicture"
         private const val DISABLE_PICTURE_IN_PICTURE_METHOD = "disablePictureInPicture"
         private const val IS_PICTURE_IN_PICTURE_SUPPORTED_METHOD = "isPictureInPictureSupported"

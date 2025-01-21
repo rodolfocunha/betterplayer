@@ -42,6 +42,7 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
           'bufferForPlaybackMs': bufferingConfiguration.bufferForPlaybackMs,
           'bufferForPlaybackAfterRebufferMs':
               bufferingConfiguration.bufferForPlaybackAfterRebufferMs,
+          'backBufferDurationMs': bufferingConfiguration.backBufferDurationMs,
         },
       );
 
@@ -95,6 +96,7 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
           'activityName': dataSource.activityName,
           'clearKey': dataSource.clearKey,
           'videoExtension': dataSource.videoExtension,
+          'allowChunklessPreparation': dataSource.allowChunklessPreparation,
         };
         break;
       case DataSourceType.file:
@@ -220,6 +222,16 @@ class MethodChannelVideoPlayer extends VideoPlayerPlatform {
     if (milliseconds <= 0) return null;
 
     return DateTime.fromMillisecondsSinceEpoch(milliseconds);
+  }
+
+  @override
+  Future<void> setPictureInPictureActions(List<String> actions) {
+    return _channel.invokeMethod<void>(
+      'setPictureInPictureActions',
+      <String, dynamic>{
+        'actions': actions,
+      },
+    );
   }
 
   @override

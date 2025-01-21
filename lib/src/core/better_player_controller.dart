@@ -9,6 +9,7 @@ import 'package:better_player/src/video_player/video_player.dart';
 import 'package:better_player/src/video_player/video_player_platform_interface.dart';
 import 'package:collection/collection.dart' show IterableExtension;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 ///Class used to control overall Better Player behavior. Main class to change
@@ -210,6 +211,15 @@ class BetterPlayerController {
   ///Currently displayed [BetterPlayerSubtitle].
   BetterPlayerSubtitle? renderedSubtitle;
 
+  ///Whether the player by default enters full screen mode
+  bool? _fullScreenByDefault;
+
+  bool _isPipActive = false;
+
+  bool get isPipActive => _isPipActive;
+
+  BetterPlayerPiPActions? _pipActions;
+
   BetterPlayerController(
     this.betterPlayerConfiguration, {
     this.betterPlayerPlaylistConfiguration,
@@ -221,6 +231,44 @@ class BetterPlayerController {
     if (betterPlayerDataSource != null) {
       setupDataSource(betterPlayerDataSource);
     }
+
+    MethodChannel('better_player.pip_mode').setMethodCallHandler(
+      (call) async {
+        switch (call.method) {
+          case 'onPipEntered':
+            _isPipActive = true;
+            break;
+          case 'onPipExited':
+            if (isPlaying() == false) {
+              setControlsVisibility(true);
+            } 
+            _isPipActive = false;
+            break;
+          case 'onPipAction':
+            String arg = call.arguments;
+
+            switch (arg) {
+              case 'play':
+              case 'pause':
+                _pipActions?.onPause?.call(this);
+                break;
+              case 'next':
+                _pipActions?.onNext?.call(this);
+                break;
+              case 'previous':
+                _pipActions?.onPrevious?.call(this);
+                break;
+              case 'forward':
+                _pipActions?.onForward?.call(this);
+                break;
+              case 'backward':
+                _pipActions?.onBackward?.call(this);
+                break;
+            }
+            break;
+        }
+      },
+    );
   }
 
   ///Get BetterPlayerController from context. Used in InheritedWidget.
@@ -470,6 +518,10 @@ class BetterPlayerController {
               _betterPlayerDataSource?.notificationConfiguration?.activityName,
           clearKey: _betterPlayerDataSource?.drmConfiguration?.clearKey,
           videoExtension: _betterPlayerDataSource!.videoExtension,
+          bufferingConfiguration:
+              _betterPlayerDataSource?.bufferingConfiguration,
+          allowChunklessPreparation:
+              _betterPlayerDataSource?.allowChunklessPreparation,
         );
 
         break;
@@ -551,7 +603,8 @@ class BetterPlayerController {
         ?.videoEventStreamController.stream
         .listen(_handleVideoEvent);
 
-    final fullScreenByDefault = betterPlayerConfiguration.fullScreenByDefault;
+    final fullScreenByDefault =
+        _fullScreenByDefault ?? betterPlayerConfiguration.fullScreenByDefault;
     if (betterPlayerConfiguration.autoPlay) {
       if (fullScreenByDefault && !isFullScreen) {
         enterFullScreen();
@@ -586,6 +639,11 @@ class BetterPlayerController {
     }
   }
 
+  ///Enable/Disable full screen by default parameter
+  void setFullScreenByDefault(bool enable) {
+    _fullScreenByDefault = enable;
+  }
+
   ///Enables full screen mode in player. This will trigger route change.
   void enterFullScreen() {
     _isFullScreen = true;
@@ -615,13 +673,11 @@ class BetterPlayerController {
       throw StateError("The data source has not been initialized");
     }
 
-    if (_appLifecycleState == AppLifecycleState.resumed) {
-      await videoPlayerController!.play();
-      _hasCurrentDataSourceStarted = true;
-      _wasPlayingBeforePause = null;
-      _postEvent(BetterPlayerEvent(BetterPlayerEventType.play));
-      _postControllerEvent(BetterPlayerControllerEvent.play);
-    }
+    await videoPlayerController!.play();
+    _hasCurrentDataSourceStarted = true;
+    _wasPlayingBeforePause = null;
+    _postEvent(BetterPlayerEvent(BetterPlayerEventType.play));
+    _postControllerEvent(BetterPlayerControllerEvent.play);
   }
 
   ///Enables/disables looping (infinity playback) mode.
@@ -800,15 +856,17 @@ class BetterPlayerController {
     final int now = DateTime.now().millisecondsSinceEpoch;
     if (now - _lastPositionSelection > 500) {
       _lastPositionSelection = now;
-      _postEvent(
-        BetterPlayerEvent(
-          BetterPlayerEventType.progress,
-          parameters: <String, dynamic>{
-            _progressParameter: currentVideoPlayerValue.position,
-            _durationParameter: currentVideoPlayerValue.duration
-          },
-        ),
-      );
+      if (videoPlayerController?.value.isPlaying ?? false) {
+        _postEvent(
+          BetterPlayerEvent(
+            BetterPlayerEventType.progress,
+            parameters: <String, dynamic>{
+              _progressParameter: currentVideoPlayerValue.position,
+              _durationParameter: currentVideoPlayerValue.duration
+            },
+          ),
+        );
+      }
     }
   }
 
@@ -1043,6 +1101,7 @@ class BetterPlayerController {
   ///Setup overridden fit.
   void setOverriddenFit(BoxFit fit) {
     _overriddenFit = fit;
+    _postControllerEvent(BetterPlayerControllerEvent.changeFit);
   }
 
   ///Get fit used in current video. If fit is null, then fit from
@@ -1068,10 +1127,11 @@ class BetterPlayerController {
       _wasControlsEnabledBeforePiP = _controlsEnabled;
       setControlsEnabled(false);
       if (Platform.isAndroid) {
-        _wasInFullScreenBeforePiP = _isFullScreen;
+        if (!_isFullScreen) {
+          enterFullScreen();
+        }
         await videoPlayerController?.enablePictureInPicture(
             left: 0, top: 0, width: 0, height: 0);
-        enterFullScreen();
         _postEvent(BetterPlayerEvent(BetterPlayerEventType.pipStart));
         return;
       }
@@ -1107,6 +1167,7 @@ class BetterPlayerController {
     if (videoPlayerController == null) {
       throw StateError("The data source has not been initialized");
     }
+    _pipActions = null;
     return videoPlayerController!.disablePictureInPicture();
   }
 
@@ -1175,6 +1236,27 @@ class BetterPlayerController {
   void setControlsAlwaysVisible(bool controlsAlwaysVisible) {
     _controlsAlwaysVisible = controlsAlwaysVisible;
     _controlsVisibilityStreamController.add(controlsAlwaysVisible);
+  }
+
+  void setPipActions(BetterPlayerPiPActions actions) async {
+    if (videoPlayerController == null) {
+      throw StateError("The data source has not been initialized");
+    }
+    _pipActions = actions;
+
+    if (Platform.isAndroid) {
+      await videoPlayerController?.setPictureInPictureActions([
+        if (actions.onPrevious != null) 'previous',
+        if (actions.onBackward != null) 'backward',
+        if (actions.onPause != null) 'pause',
+        if (actions.onForward != null) 'forward',
+        if (actions.onNext != null) 'next',
+      ]);
+    } else if (Platform.isIOS) {
+      BetterPlayerUtils.log("Not implemented for iOS");
+    } else {
+      BetterPlayerUtils.log("Unsupported PiP in current platform.");
+    }
   }
 
   ///Retry data source if playback failed.

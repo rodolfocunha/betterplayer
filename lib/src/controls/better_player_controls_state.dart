@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:better_player/better_player.dart';
 import 'package:better_player/src/controls/better_player_clickable_widget.dart';
-import 'package:better_player/src/core/better_player_utils.dart';
 import 'package:collection/collection.dart' show IterableExtension;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +19,8 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
   VideoPlayerValue? get latestValue;
 
   bool controlsNotVisible = true;
+
+  String? selectedTrackName;
 
   void cancelAndRestartTimer();
 
@@ -69,27 +70,41 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
       child: Container(
         child: Column(
           children: [
-            if (betterPlayerControlsConfiguration.enablePlaybackSpeed)
-              _buildMoreOptionsListRow(
-                  betterPlayerControlsConfiguration.playbackSpeedIcon,
-                  translations.overflowMenuPlaybackSpeed, () {
-                Navigator.of(context).pop();
-                _showSpeedChooserWidget();
-              }),
-            if (betterPlayerControlsConfiguration.enableSubtitles)
-              _buildMoreOptionsListRow(
-                  betterPlayerControlsConfiguration.subtitlesIcon,
-                  translations.overflowMenuSubtitles, () {
-                Navigator.of(context).pop();
-                _showSubtitlesSelectionWidget();
-              }),
+            SizedBox(height: 8),
             if (betterPlayerControlsConfiguration.enableQualities)
               _buildMoreOptionsListRow(
-                  betterPlayerControlsConfiguration.qualitiesIcon,
-                  translations.overflowMenuQuality, () {
-                Navigator.of(context).pop();
-                _showQualitiesSelectionWidget();
-              }),
+                betterPlayerControlsConfiguration.qualitiesIcon,
+                translations.overflowMenuQuality +
+                    ' (${selectedTrackName ?? betterPlayerController!.translations.qualityAuto})',
+                () {
+                  Navigator.of(context).pop();
+                  _showQualitiesSelectionWidget();
+                },
+                customIcon:
+                    betterPlayerControlsConfiguration.customQualitiesIcon,
+              ),
+            if (betterPlayerControlsConfiguration.enableSubtitles)
+              _buildMoreOptionsListRow(
+                betterPlayerControlsConfiguration.subtitlesIcon,
+                translations.overflowMenuSubtitles,
+                () {
+                  Navigator.of(context).pop();
+                  _showSubtitlesSelectionWidget();
+                },
+                customIcon:
+                    betterPlayerControlsConfiguration.customSubtitlesIcon,
+              ),
+            if (betterPlayerControlsConfiguration.enablePlaybackSpeed)
+              _buildMoreOptionsListRow(
+                betterPlayerControlsConfiguration.playbackSpeedIcon,
+                translations.overflowMenuPlaybackSpeed,
+                () {
+                  Navigator.of(context).pop();
+                  _showSpeedChooserWidget();
+                },
+                customIcon:
+                    betterPlayerControlsConfiguration.customPlaybackSpeedIcon,
+              ),
             if (betterPlayerControlsConfiguration.enableAudioTracks)
               _buildMoreOptionsListRow(
                   betterPlayerControlsConfiguration.audioTracksIcon,
@@ -108,7 +123,8 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
                     customItem.onClicked.call();
                   },
                 ),
-              )
+              ),
+            SizedBox(height: 12),
           ],
         ),
       ),
@@ -116,23 +132,29 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
   }
 
   Widget _buildMoreOptionsListRow(
-      IconData icon, String name, void Function() onTap) {
+      IconData icon, String name, void Function() onTap,
+      {Widget? customIcon}) {
     return BetterPlayerMaterialClickableWidget(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
         child: Row(
           children: [
-            const SizedBox(width: 8),
-            Icon(
-              icon,
-              color: betterPlayerControlsConfiguration.overflowMenuIconsColor,
-            ),
-            const SizedBox(width: 16),
+            customIcon ??
+                Icon(icon,
+                    color: betterPlayerControlsConfiguration
+                        .overflowMenuIconsColor),
+            const SizedBox(width: 12),
             Text(
               name,
               style: _getOverflowMenuElementTextStyle(false),
             ),
+            const Spacer(),
+            Icon(
+              Icons.keyboard_arrow_right_outlined,
+              size: 20,
+              color: betterPlayerControlsConfiguration.overflowMenuIconsColor,
+            )
           ],
         ),
       ),
@@ -269,13 +291,21 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
   ///Resolution selection is used for normal videos
   void _showQualitiesSelectionWidget() {
     // HLS / DASH
-    final List<String> asmsTrackNames =
-        betterPlayerController!.betterPlayerDataSource!.asmsTrackNames ?? [];
     final List<BetterPlayerAsmsTrack> asmsTracks =
         betterPlayerController!.betterPlayerAsmsTracks;
+
+
+    final sortedTracks = [
+      ...(asmsTracks..sort((a, b) => (b.height ?? 0).compareTo(a.height ?? 0)))
+    ];
+
+    final List<String> asmsTrackNames =
+        sortedTracks.map((track) => _getTrackName(track)).toList();
+
     final List<Widget> children = [];
-    for (var index = 0; index < asmsTracks.length; index++) {
-      final track = asmsTracks[index];
+
+    for (var index = 0; index < sortedTracks.length; index++) {
+      final track = sortedTracks[index];
 
       String? preferredName;
       if (track.height == 0 && track.width == 0 && track.bitrate == 0) {
@@ -284,7 +314,7 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
         preferredName =
             asmsTrackNames.length > index ? asmsTrackNames[index] : null;
       }
-      children.add(_buildTrackRow(asmsTracks[index], preferredName));
+      children.add(_buildTrackRow(sortedTracks[index], preferredName));
     }
 
     // normal videos
@@ -304,13 +334,50 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
     _showModalBottomSheet(children);
   }
 
+  String _getTrackName(BetterPlayerAsmsTrack track) {
+    String result = '${track.height}p';
+    int width = track.width ?? 0;
+    int height = track.height ?? 0;
+    if (height < 200) {
+      result = '160p';
+    } else if (height >= 200 && height <= 300) {
+      result = '240p';
+    } else if (height > 300 && height <= 400) {
+      result = '360p';
+    } else if (height > 400 && height <= 500) {
+      result = '480p';
+    } else if (height > 500 && height <= 600) {
+      result = '540p';
+    } else if (height > 600 && height <= 900) {
+      result = '720p';
+    } else if (height > 900 && height <= 1200) {
+      result = '1080p';
+    } else if (height > 1200 && height <= 1800) {
+      result = '1440p';
+    } else if (height > 1800) {
+      result = '2160p';
+    }
+    if (width == 426 && height <= 240) {
+      result = '240p';
+    } else if (width == 640 && height <= 360) {
+      result = '360p';
+    } else if ((width >= 854 && width <= 860) && height <= 480) {
+      result = '480p';
+    } else if (width == 1280 && height <= 720) {
+      result = '720p';
+    } else if (width == 1920 && height <= 1080) {
+      result = '1080p';
+    } else if (width == 2560 && height <= 1440) {
+      result = '1440p';
+    } else if (width == 3840 && height <= 2160) {
+      result = '2160p';
+    }
+    return result;
+  }
+
   Widget _buildTrackRow(BetterPlayerAsmsTrack track, String? preferredName) {
-    final int width = track.width ?? 0;
     final int height = track.height ?? 0;
-    final int bitrate = track.bitrate ?? 0;
-    final String mimeType = (track.mimeType ?? '').replaceAll('video/', '');
-    final String trackName = preferredName ??
-        "${width}x$height ${BetterPlayerUtils.formatBitrate(bitrate)} $mimeType";
+    final String trackName = preferredName ?? height.toString();
 
     final BetterPlayerAsmsTrack? selectedTrack =
         betterPlayerController!.betterPlayerAsmsTrack;
@@ -320,6 +387,7 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
       onTap: () {
         Navigator.of(context).pop();
         betterPlayerController!.setTrack(track);
+        selectedTrackName = preferredName ?? track.height?.toString() ?? '';
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
@@ -435,13 +503,14 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
   }
 
   TextStyle _getOverflowMenuElementTextStyle(bool isSelected) {
-    return TextStyle(
-      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-      color: isSelected
-          ? betterPlayerControlsConfiguration.overflowModalTextColor
-          : betterPlayerControlsConfiguration.overflowModalTextColor
-              .withOpacity(0.7),
-    );
+    return isSelected
+        ? betterPlayerControlsConfiguration.modalSelectedTextStyle ??
+            TextStyle(
+                color: betterPlayerControlsConfiguration.overflowModalTextColor)
+        : betterPlayerControlsConfiguration.modalUnselectedTextStyle ??
+            TextStyle(
+                color:
+                    betterPlayerControlsConfiguration.overflowModalTextColor);
   }
 
   void _showModalBottomSheet(List<Widget> children) {
@@ -451,8 +520,8 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
   }
 
   void _showCupertinoModalBottomSheet(List<Widget> children) {
-    showCupertinoModalPopup<void>(
-      barrierColor: Colors.transparent,
+    showModalBottomSheet<void>(
+      backgroundColor: Colors.transparent,
       context: context,
       useRootNavigator:
           betterPlayerController?.betterPlayerConfiguration.useRootNavigator ??
@@ -460,19 +529,34 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
       builder: (context) {
         return SafeArea(
           top: false,
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              decoration: BoxDecoration(
-                color: betterPlayerControlsConfiguration.overflowModalColor,
-                /*shape: RoundedRectangleBorder(side: Bor,borderRadius: 24,)*/
-                borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(24.0),
-                    topRight: Radius.circular(24.0)),
-              ),
-              child: Column(
-                children: children,
+          bottom: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: 300),
+            child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24.0)),
+              child: Scrollbar(
+                thumbVisibility: true,
+                trackVisibility: false,
+                radius: const Radius.circular(8),
+                child: SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                    decoration: BoxDecoration(
+                        color: betterPlayerControlsConfiguration
+                            .overflowModalColor),
+                    child: SafeArea(
+                      top: false,
+                      left: false,
+                      right: false,
+                      child: Column(
+                        children: children,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -485,24 +569,32 @@ abstract class BetterPlayerControlsState<T extends StatefulWidget>
     showModalBottomSheet<void>(
       backgroundColor: Colors.transparent,
       context: context,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(24.0),
+          topRight: Radius.circular(24.0),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       useRootNavigator:
           betterPlayerController?.betterPlayerConfiguration.useRootNavigator ??
               false,
       builder: (context) {
         return SafeArea(
           top: false,
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              decoration: BoxDecoration(
+          child: RawScrollbar(
+            thumbVisibility: true,
+            trackVisibility: false,
+            interactive: false,
+            // padding: EdgeInsets.only(top: 16),
+            radius: const Radius.circular(8),
+            child: SingleChildScrollView(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
                 color: betterPlayerControlsConfiguration.overflowModalColor,
-                borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(24.0),
-                    topRight: Radius.circular(24.0)),
-              ),
-              child: Column(
-                children: children,
+                child: Column(
+                  children: children,
+                ),
               ),
             ),
           ),
