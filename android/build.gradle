@@ -86,7 +86,9 @@ publishing {
             artifactId = 'better-player'
             version = version
             
-            from components.java
+            afterEvaluate {
+                from components.release  // ou components.release dependendo do que você quer publicar
+            }
         }
     }
 }
