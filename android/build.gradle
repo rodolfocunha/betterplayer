@@ -50,7 +50,6 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.jhomlala.better_player"
         minSdkVersion 24
     }
 
@@ -82,14 +81,12 @@ dependencies {
 
 publishing {
     publications {
-        release(MavenPublication) {
+        maven(MavenPublication) {
             groupId = group
             artifactId = 'better-player'
             version = version
             
-            afterEvaluate {
-                from components.release
-            }
+            from components.java
         }
     }
 }
