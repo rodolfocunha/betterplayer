@@ -33,7 +33,7 @@ apply plugin: 'kotlin-android'
 apply plugin: 'maven-publish'
 
 android {
-    namespace = 'com.jhomlala.better_player.better_player'
+    namespace 'com.jhomlala.better_player'
     compileSdkVersion 31
 
     compileOptions {
